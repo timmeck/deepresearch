@@ -3,6 +3,7 @@ import aiosqlite, json
 from datetime import datetime, timezone
 from pathlib import Path
 from src.config import DB_PATH
+from src.ai.embeddings import embed_text, store_embedding, search_similar, ensure_table as ensure_embeddings_table
 from src.utils.logger import get_logger
 
 log = get_logger("db")
@@ -101,6 +102,7 @@ class Database:
                 try: await self.conn.execute(s)
                 except: pass
         await self.conn.commit()
+        await ensure_embeddings_table(self.conn)
         log.info(f"Database initialized: {self.db_path}")
 
     async def close(self):
@@ -170,11 +172,27 @@ class Database:
             await self.conn.execute("INSERT INTO chunks_fts(rowid, content) VALUES (?, ?)", (cid, content))
         except: pass
         await self.conn.commit()
+        # Generate and store embedding
+        vector = await embed_text(content)
+        if vector:
+            await store_embedding(self.conn, "source_chunks", cid, vector)
         return cid
 
     async def search_chunks(self, query: str, project_id: int = None, limit: int = 10) -> list[dict]:
+        """Hybrid search: semantic similarity + FTS5."""
+        # Strategy 1: Semantic search
+        semantic_scores = {}
+        query_vector = await embed_text(query)
+        if query_vector:
+            similar = await search_similar(self.conn, query_vector, "source_chunks", limit=limit * 2)
+            for item in similar:
+                semantic_scores[item["source_id"]] = item["similarity"]
+
+        # Strategy 2: FTS5 search
+        fts_scores = {}
+        fts_lookup = {}
         try:
-            sql = """SELECT sc.*, s.url, s.title as source_title, s.project_id
+            sql = """SELECT sc.*, s.url, s.title as source_title, s.project_id, rank
                      FROM chunks_fts fts
                      JOIN source_chunks sc ON sc.id = fts.rowid
                      JOIN sources s ON s.id = sc.source_id
@@ -184,13 +202,59 @@ class Database:
                 sql += " AND s.project_id = ?"
                 params.append(project_id)
             sql += " ORDER BY rank LIMIT ?"
-            params.append(limit)
+            params.append(limit * 2)
             c = await self.conn.execute(sql, params)
-            return [dict(r) for r in await c.fetchall()]
-        except:
-            sql = "SELECT sc.*, s.url, s.title as source_title FROM source_chunks sc JOIN sources s ON s.id = sc.source_id WHERE sc.content LIKE ? LIMIT ?"
-            c = await self.conn.execute(sql, (f"%{query}%", limit))
-            return [dict(r) for r in await c.fetchall()]
+            fts_results = await c.fetchall()
+            if fts_results:
+                ranks = [abs(dict(r).get("rank", 0)) for r in fts_results]
+                max_rank = max(ranks) if ranks else 1.0
+                for r in fts_results:
+                    row = dict(r)
+                    fts_scores[row["id"]] = 1.0 - (abs(row.get("rank", 0)) / max_rank) if max_rank else 0.5
+                    fts_lookup[row["id"]] = row
+        except Exception:
+            pass
+
+        # Combine hybrid scores
+        all_ids = set(semantic_scores.keys()) | set(fts_scores.keys())
+        if all_ids:
+            hybrid = []
+            for cid in all_ids:
+                sem = semantic_scores.get(cid, 0.0)
+                fts = fts_scores.get(cid, 0.0)
+                hybrid.append((cid, 0.6 * sem + 0.4 * fts))
+            hybrid.sort(key=lambda x: x[1], reverse=True)
+
+            results = []
+            for cid, score in hybrid[:limit]:
+                if cid in fts_lookup:
+                    row = fts_lookup[cid]
+                    # Filter by project_id if needed
+                    if project_id and row.get("project_id") != project_id:
+                        continue
+                    results.append(row)
+                else:
+                    c = await self.conn.execute(
+                        "SELECT sc.*, s.url, s.title as source_title, s.project_id "
+                        "FROM source_chunks sc JOIN sources s ON s.id = sc.source_id WHERE sc.id = ?", (cid,))
+                    row = await c.fetchone()
+                    if row:
+                        d = dict(row)
+                        if project_id and d.get("project_id") != project_id:
+                            continue
+                        results.append(d)
+            return results
+
+        # Fallback to LIKE
+        sql = "SELECT sc.*, s.url, s.title as source_title FROM source_chunks sc JOIN sources s ON s.id = sc.source_id WHERE sc.content LIKE ?"
+        params = [f"%{query}%"]
+        if project_id:
+            sql += " AND s.project_id = ?"
+            params.append(project_id)
+        sql += " LIMIT ?"
+        params.append(limit)
+        c = await self.conn.execute(sql, params)
+        return [dict(r) for r in await c.fetchall()]
 
     # ── Findings ───────────────────────────────────────────────────
 

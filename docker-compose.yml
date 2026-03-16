@@ -1,0 +1,12 @@
+services:
+  deepresearch:
+    build: .
+    ports:
+      - "8400:8400"
+    volumes:
+      - dr-data:/app/data
+    env_file:
+      - .env
+    restart: unless-stopped
+volumes:
+  dr-data:

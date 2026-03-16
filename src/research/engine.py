@@ -12,7 +12,7 @@ Pipeline:
 import json
 from src.db.database import Database
 from src.ai.llm import LLM
-from src.research.crawler import fetch_url, chunk_text
+from src.research.crawler import fetch_url, chunk_text, search_web
 from src.config import MAX_SEARCH_RESULTS
 from src.utils.logger import get_logger
 
@@ -120,30 +120,45 @@ class ResearchEngine:
         return {"answer": answer, "sources": source_refs}
 
     async def _generate_search_urls(self, topic: str) -> list[str]:
-        """Use LLM to generate relevant URLs to research."""
+        """Use DuckDuckGo search as primary source, LLM-generated URLs as supplement."""
+        # PRIMARY: real web search via DuckDuckGo
+        search_urls = await search_web(topic, num_results=8)
+        log.info(f"DuckDuckGo returned {len(search_urls)} URLs for '{topic[:50]}'")
+
+        # SUPPLEMENT: LLM-generated URLs for known authoritative sources
+        llm_urls = []
         result = await self.llm.query(
-            f"Generate 5-8 specific URLs that would have valuable information about this research topic.\n"
-            f"Include: Wikipedia, official docs, GitHub repos, reputable tech blogs, comparison articles.\n"
+            f"Generate 3-5 specific URLs that would have valuable information about this research topic.\n"
+            f"Include: Wikipedia, official docs, GitHub repos, reputable tech blogs.\n"
             f"Return ONLY URLs, one per line, no other text.\n\n"
             f"Topic: {topic}",
             system="You generate research URLs. Return only URLs, one per line.",
-            max_tokens=500,
+            max_tokens=300,
         )
 
-        if not result:
-            # Fallback: generate basic URLs
-            clean_topic = topic.lower().replace(" ", "+")
-            return [
+        if result:
+            for line in result.strip().split("\n"):
+                line = line.strip().strip("-").strip("*").strip("0123456789.").strip()
+                if line.startswith("http"):
+                    llm_urls.append(line)
+
+        # Merge: search URLs first, then LLM URLs (deduplicated)
+        seen = set()
+        merged = []
+        for url in search_urls + llm_urls:
+            if url not in seen:
+                seen.add(url)
+                merged.append(url)
+
+        if not merged:
+            # Last resort fallback
+            merged = [
                 f"https://en.wikipedia.org/wiki/{topic.replace(' ', '_')}",
                 f"https://github.com/topics/{topic.lower().replace(' ', '-')}",
             ]
 
-        urls = []
-        for line in result.strip().split("\n"):
-            line = line.strip().strip("-").strip("*").strip("0123456789.").strip()
-            if line.startswith("http"):
-                urls.append(line)
-        return urls if urls else [f"https://en.wikipedia.org/wiki/{topic.replace(' ', '_')}"]
+        log.info(f"Total URLs to crawl: {len(merged)} ({len(search_urls)} search + {len(llm_urls)} LLM)")
+        return merged
 
     async def _crawl_and_index(self, project_id: int, url: str):
         """Crawl a URL, extract text, chunk and index it."""

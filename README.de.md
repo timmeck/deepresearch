@@ -6,6 +6,8 @@ Gib ein Thema ein — DeepResearch crawlt das Web, analysiert Quellen, extrahier
 
 **Reines Python + SQLite. 18 Tests. Keine API-Keys noetig.**
 
+![DeepResearch Dashboard](docs/dashboard.png)
+
 ## Was es macht
 
 ```

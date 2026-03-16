@@ -23,6 +23,8 @@ Give it a topic — it crawls the web, analyzes sources, extracts findings, and 
 
 **Pure Python + SQLite. 18 tests. No API keys required.**
 
+![DeepResearch Dashboard](docs/dashboard.png)
+
 ## What It Does
 
 ```

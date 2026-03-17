@@ -52,6 +52,52 @@ async def api_status():
     return {"status": "ok", "llm_provider": llm.provider, "llm_model": llm.model,
             "llm_healthy": llm.is_healthy, **stats}
 
+
+# ── Nexus Protocol Endpoint ────────────────────────────────────────
+
+@app.post("/nexus/handle")
+async def nexus_handle(request: Request):
+    """Handle incoming NexusRequest from the Nexus protocol layer."""
+    import time, uuid
+    body = await request.json()
+    start = time.perf_counter_ns()
+    capability = body.get("capability", "")
+    query = body.get("query", "")
+    req_id = body.get("request_id", "")
+    from_agent = body.get("from_agent", "")
+
+    try:
+        if capability == "deep_research":
+            result = await engine.research(query)
+            answer = result.get("report", result.get("summary", str(result)))
+            confidence = result.get("confidence", 0.80)
+            sources = result.get("sources", [])
+        elif capability == "fact_checking":
+            result = await engine.research(f"Fact check: {query}")
+            answer = result.get("report", str(result))
+            confidence = result.get("confidence", 0.70)
+            sources = result.get("sources", [])
+        else:
+            elapsed = (time.perf_counter_ns() - start) // 1_000_000
+            return {"response_id": uuid.uuid4().hex, "request_id": req_id,
+                    "from_agent": "deep-research", "to_agent": from_agent,
+                    "status": "failed", "answer": "", "confidence": 0.0,
+                    "error": f"Unsupported capability: {capability}",
+                    "processing_ms": elapsed, "cost": 0.0, "sources": [], "meta": {}}
+
+        elapsed = (time.perf_counter_ns() - start) // 1_000_000
+        return {"response_id": uuid.uuid4().hex, "request_id": req_id,
+                "from_agent": "deep-research", "to_agent": from_agent,
+                "status": "completed", "answer": answer, "confidence": confidence,
+                "processing_ms": elapsed, "cost": 0.05, "sources": sources, "meta": {"capability": capability}}
+    except Exception as e:
+        elapsed = (time.perf_counter_ns() - start) // 1_000_000
+        return {"response_id": uuid.uuid4().hex, "request_id": req_id,
+                "from_agent": "deep-research", "to_agent": from_agent,
+                "status": "failed", "answer": "", "confidence": 0.0,
+                "error": str(e), "processing_ms": elapsed, "cost": 0.0, "sources": [], "meta": {}}
+
+
 # ── Research ───────────────────────────────────────────────────────
 
 @app.post("/api/research")

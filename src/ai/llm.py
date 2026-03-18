@@ -68,9 +68,15 @@ class LLM:
                         resp.raise_for_status()
                     self._failures = 0
                     return resp.json().get("message", {}).get("content", "")
+            except (TimeoutError, httpx.ConnectError, httpx.ReadError) as e:
+                self._failures += 1
+                log.warning(f"LLM network error (attempt {attempt + 1}): {type(e).__name__}: {e}")
+            except httpx.HTTPStatusError as e:
+                self._failures += 1
+                log.error(f"LLM HTTP {e.response.status_code} (attempt {attempt + 1}): {e}")
             except Exception as e:
                 self._failures += 1
-                log.error(f"LLM failed (attempt {attempt + 1}): {e}")
+                log.error(f"LLM unexpected error (attempt {attempt + 1}): {type(e).__name__}: {e}")
                 if attempt < LLM_MAX_RETRIES - 1:
                     await asyncio.sleep(LLM_RETRY_DELAY * (2**attempt))
         return None

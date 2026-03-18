@@ -48,8 +48,12 @@ async def embed_text(text: str) -> list[float] | None:
             embeddings = data.get("embeddings", [])
             if embeddings and len(embeddings[0]) > 0:
                 return embeddings[0]
+    except (TimeoutError, httpx.ConnectError, httpx.ReadError) as e:
+        log.debug(f"Embedding network error: {type(e).__name__}: {e}")
+    except httpx.HTTPStatusError as e:
+        log.warning(f"Embedding HTTP {e.response.status_code}: {e}")
     except Exception as e:
-        log.debug(f"Embedding failed: {e}")
+        log.warning(f"Embedding unexpected error: {type(e).__name__}: {e}")
     return None
 
 

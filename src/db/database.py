@@ -1,6 +1,7 @@
 """Database for DeepResearch."""
 
 import json
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -106,7 +107,7 @@ class Database:
             if s:
                 try:
                     await self.conn.execute(s)
-                except Exception:
+                except (sqlite3.OperationalError, sqlite3.ProgrammingError):
                     pass
         await self.conn.commit()
         await ensure_embeddings_table(self.conn)
@@ -192,7 +193,7 @@ class Database:
         cid = c.lastrowid
         try:
             await self.conn.execute("INSERT INTO chunks_fts(rowid, content) VALUES (?, ?)", (cid, content))
-        except Exception:
+        except (sqlite3.OperationalError, sqlite3.ProgrammingError):
             pass
         await self.conn.commit()
         # Generate and store embedding
@@ -235,7 +236,7 @@ class Database:
                     row = dict(r)
                     fts_scores[row["id"]] = 1.0 - (abs(row.get("rank", 0)) / max_rank) if max_rank else 0.5
                     fts_lookup[row["id"]] = row
-        except Exception:
+        except (sqlite3.OperationalError, sqlite3.ProgrammingError):
             pass
 
         # Combine hybrid scores
@@ -307,7 +308,7 @@ class Database:
             d = dict(r)
             try:
                 d["source_ids"] = json.loads(d["source_ids"])
-            except Exception:
+            except (json.JSONDecodeError, ValueError):
                 pass
             results.append(d)
         return results

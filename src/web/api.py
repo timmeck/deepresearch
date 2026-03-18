@@ -11,7 +11,7 @@ from src.db.database import Database
 from src.ai.llm import LLM
 from src.research.engine import ResearchEngine
 from src.web.auth import AuthMiddleware
-from src.config import DEEPRESEARCH_PORT, REPORTS_DIR
+from src.config import DEEPRESEARCH_PORT, NEXUS_URL, REPORTS_DIR
 from src.utils.logger import get_logger
 
 log = get_logger("web")
@@ -44,6 +44,20 @@ async def lifespan(app):
 
 app = FastAPI(title="DeepResearch", version="1.0.0", lifespan=lifespan)
 app.add_middleware(AuthMiddleware)
+
+from src.nexus_sdk import NexusAdapter
+
+nexus = NexusAdapter(
+    app=app, agent_name="deep-research", nexus_url=NEXUS_URL,
+    endpoint=f"http://localhost:{DEEPRESEARCH_PORT}",
+    description="AI Research Assistant — automated web research with citations",
+    capabilities=[
+        {"name": "deep_research", "description": "Conduct automated research on any topic", "languages": ["en"], "price_per_request": 0.05},
+        {"name": "fact_checking", "description": "Verify claims with source-backed research", "languages": ["en"], "price_per_request": 0.05},
+    ],
+    tags=["research", "web", "citations", "facts"],
+)
+
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 @app.get("/api/status")
@@ -53,49 +67,16 @@ async def api_status():
             "llm_healthy": llm.is_healthy, **stats}
 
 
-# ── Nexus Protocol Endpoint ────────────────────────────────────────
+@nexus.handle("deep_research")
+async def handle_research(query: str, params: dict) -> dict:
+    result = await engine.research(query)
+    return {"result": result.get("report", result.get("summary", str(result))), "confidence": result.get("confidence", 0.80), "cost": 0.05, "sources": result.get("sources", [])}
 
-@app.post("/nexus/handle")
-async def nexus_handle(request: Request):
-    """Handle incoming NexusRequest from the Nexus protocol layer."""
-    import time, uuid
-    body = await request.json()
-    start = time.perf_counter_ns()
-    capability = body.get("capability", "")
-    query = body.get("query", "")
-    req_id = body.get("request_id", "")
-    from_agent = body.get("from_agent", "")
 
-    try:
-        if capability == "deep_research":
-            result = await engine.research(query)
-            answer = result.get("report", result.get("summary", str(result)))
-            confidence = result.get("confidence", 0.80)
-            sources = result.get("sources", [])
-        elif capability == "fact_checking":
-            result = await engine.research(f"Fact check: {query}")
-            answer = result.get("report", str(result))
-            confidence = result.get("confidence", 0.70)
-            sources = result.get("sources", [])
-        else:
-            elapsed = (time.perf_counter_ns() - start) // 1_000_000
-            return {"response_id": uuid.uuid4().hex, "request_id": req_id,
-                    "from_agent": "deep-research", "to_agent": from_agent,
-                    "status": "failed", "answer": "", "confidence": 0.0,
-                    "error": f"Unsupported capability: {capability}",
-                    "processing_ms": elapsed, "cost": 0.0, "sources": [], "meta": {}}
-
-        elapsed = (time.perf_counter_ns() - start) // 1_000_000
-        return {"response_id": uuid.uuid4().hex, "request_id": req_id,
-                "from_agent": "deep-research", "to_agent": from_agent,
-                "status": "completed", "answer": answer, "confidence": confidence,
-                "processing_ms": elapsed, "cost": 0.05, "sources": sources, "meta": {"capability": capability}}
-    except Exception as e:
-        elapsed = (time.perf_counter_ns() - start) // 1_000_000
-        return {"response_id": uuid.uuid4().hex, "request_id": req_id,
-                "from_agent": "deep-research", "to_agent": from_agent,
-                "status": "failed", "answer": "", "confidence": 0.0,
-                "error": str(e), "processing_ms": elapsed, "cost": 0.0, "sources": [], "meta": {}}
+@nexus.handle("fact_checking")
+async def handle_fact_check(query: str, params: dict) -> dict:
+    result = await engine.research(f"Fact check: {query}")
+    return {"result": result.get("report", str(result)), "confidence": result.get("confidence", 0.70), "cost": 0.05, "sources": result.get("sources", [])}
 
 
 # ── Research ───────────────────────────────────────────────────────

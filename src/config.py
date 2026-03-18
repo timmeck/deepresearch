@@ -18,6 +18,7 @@ LLM_PROVIDER = os.getenv("LLM_PROVIDER", "anthropic" if ANTHROPIC_API_KEY else "
 DEFAULT_MODEL = os.getenv("DEEPRESEARCH_MODEL", "claude-sonnet-4-6" if LLM_PROVIDER == "anthropic" else OLLAMA_MODEL)
 
 DEEPRESEARCH_PORT = int(os.getenv("DEEPRESEARCH_PORT", "8400"))
+NEXUS_URL = os.getenv("NEXUS_URL", "http://localhost:9500")
 DEEPRESEARCH_API_KEY = os.getenv("DEEPRESEARCH_API_KEY", "")
 
 MAX_SEARCH_RESULTS = int(os.getenv("MAX_SEARCH_RESULTS", "10"))

@@ -146,6 +146,17 @@ DEEPRESEARCH_PORT=8400
 MAX_SEARCH_RESULTS=10
 ```
 
+## Nexus Protocol
+
+DeepResearch integrates with [Nexus](https://github.com/timmeck/nexus) via the NexusAdapter SDK.
+
+| Capability | Description | Price |
+|-----------|-------------|-------|
+| `deep_research` | Conduct automated research on any topic | 0.05 |
+| `fact_checking` | Verify claims with source-backed research | 0.05 |
+
+**Features**: HMAC signature verification, automatic heartbeats (30s), auto-registration with Nexus on startup.
+
 ## Testing
 
 ```bash

@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Example: Run a basic research project."""
-import asyncio, sys
+
+import asyncio
+import sys
+
 sys.path.insert(0, ".")
 
-from src.db.database import Database
 from src.ai.llm import LLM
+from src.db.database import Database
 from src.research.engine import ResearchEngine
+
 
 async def main():
     db = Database()
@@ -27,6 +31,7 @@ async def main():
         print(f"  Error: {result.get('error')}")
 
     await db.close()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -1,6 +1,11 @@
 """Tests for research engine (unit tests, no LLM/network needed)."""
-import pytest, pytest_asyncio, tempfile
+
+import tempfile
 from pathlib import Path
+
+import pytest
+import pytest_asyncio
+
 from src.db.database import Database
 from src.research.engine import ResearchEngine
 
@@ -17,7 +22,7 @@ async def eng():
 
 @pytest.mark.asyncio
 async def test_follow_up_no_project(eng):
-    engine, db = eng
+    engine, _db = eng
     result = await engine.follow_up(999, "question?")
     assert "error" in result
 

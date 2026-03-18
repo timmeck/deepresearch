@@ -1,9 +1,11 @@
 """Web Crawler -- Fetch and extract text from URLs."""
 
 import random
+from urllib.parse import quote_plus, urlparse
+
 import httpx
-from urllib.parse import urlparse, quote_plus
 from bs4 import BeautifulSoup
+
 from src.utils.logger import get_logger
 
 log = get_logger("crawler")
@@ -25,7 +27,7 @@ def _random_ua() -> str:
     return random.choice(USER_AGENTS)
 
 
-def _browser_headers(ua: str = None) -> dict:
+def _browser_headers(ua: str | None = None) -> dict:
     """Return realistic browser-like headers."""
     return {
         "User-Agent": ua or _random_ua(),
@@ -51,7 +53,8 @@ async def fetch_url(url: str) -> dict:
         try:
             ua = _random_ua()
             async with httpx.AsyncClient(
-                timeout=20, follow_redirects=True,
+                timeout=20,
+                follow_redirects=True,
                 headers=_browser_headers(ua),
             ) as client:
                 resp = await client.get(url)
@@ -63,7 +66,7 @@ async def fetch_url(url: str) -> dict:
 
                 # 403: retry with a different User-Agent
                 if resp.status_code == 403:
-                    log.info(f"403 Forbidden (attempt {attempt+1}/3): {url}")
+                    log.info(f"403 Forbidden (attempt {attempt + 1}/3): {url}")
                     last_error = "403 Forbidden"
                     if attempt < 2:
                         continue
@@ -87,7 +90,7 @@ async def fetch_url(url: str) -> dict:
 
         except Exception as e:
             last_error = str(e)
-            log.warning(f"Failed to fetch {url} (attempt {attempt+1}/3): {e}")
+            log.warning(f"Failed to fetch {url} (attempt {attempt + 1}/3): {e}")
             if attempt < 2:
                 continue
 
@@ -99,8 +102,7 @@ async def _check_robots_txt(url: str) -> bool:
     try:
         parsed = urlparse(url)
         robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True,
-                                      headers=_browser_headers()) as client:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True, headers=_browser_headers()) as client:
             resp = await client.get(robots_url)
             return resp.status_code < 400
     except Exception:
@@ -119,7 +121,7 @@ def _parse_html(url: str, html: str) -> dict:
     text = soup.get_text(separator="\n", strip=True)
 
     # Clean up excessive whitespace
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
     text = "\n".join(lines)
 
     return {"url": url, "title": title, "text": text[:50000]}  # Cap at 50K chars
@@ -136,7 +138,8 @@ async def search_web(query: str, num_results: int = 8) -> list[str]:
 
     try:
         async with httpx.AsyncClient(
-            timeout=15, follow_redirects=True,
+            timeout=15,
+            follow_redirects=True,
             headers=_browser_headers(),
         ) as client:
             resp = await client.get(search_url)
@@ -175,18 +178,16 @@ async def search_web(query: str, num_results: int = 8) -> list[str]:
     return urls[:num_results]
 
 
-async def extract_links(url: str, html: str = None) -> list[str]:
+async def extract_links(url: str, html: str | None = None) -> list[str]:
     """Extract links from a page."""
     try:
         if not html:
-            async with httpx.AsyncClient(timeout=15, follow_redirects=True,
-                                          headers=_browser_headers()) as client:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=_browser_headers()) as client:
                 resp = await client.get(url)
                 html = resp.text
 
         soup = BeautifulSoup(html, "html.parser")
         links = []
-        base = url.rsplit("/", 1)[0]
 
         for a in soup.find_all("a", href=True):
             href = a["href"]

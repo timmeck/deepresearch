@@ -1,5 +1,5 @@
 """Tests for web crawler."""
-import pytest
+
 from src.research.crawler import chunk_text
 
 

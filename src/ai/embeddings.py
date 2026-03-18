@@ -4,9 +4,11 @@ Shared module: embed text, store in SQLite as BLOB, cosine similarity search.
 Hybrid search: 0.6 * semantic + 0.4 * FTS5 rank (when available).
 """
 
-import struct
 import math
+import struct
+
 import httpx
+
 from src.config import OLLAMA_URL
 from src.utils.logger import get_logger
 
@@ -83,15 +85,19 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
 async def store_embedding(conn, source_table: str, source_id: int, vector: list[float]):
     """Store an embedding vector in the database."""
     blob = to_blob(vector)
-    await conn.execute("""
+    await conn.execute(
+        """
         INSERT OR REPLACE INTO embeddings (source_table, source_id, embedding)
         VALUES (?, ?, ?)
-    """, (source_table, source_id, blob))
+    """,
+        (source_table, source_id, blob),
+    )
     await conn.commit()
 
 
-async def search_similar(conn, query_vector: list[float], source_table: str,
-                         limit: int = 10, source_ids: set = None) -> list[dict]:
+async def search_similar(
+    conn, query_vector: list[float], source_table: str, limit: int = 10, source_ids: set | None = None
+) -> list[dict]:
     """Find most similar entries by cosine similarity.
 
     Returns list of {source_id, similarity} sorted by similarity DESC.

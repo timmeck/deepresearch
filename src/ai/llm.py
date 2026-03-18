@@ -1,9 +1,22 @@
 """LLM for DeepResearch."""
-import asyncio, httpx
-from src.config import ANTHROPIC_API_KEY, OLLAMA_URL, OLLAMA_MODEL, DEFAULT_MODEL, LLM_PROVIDER, LLM_MAX_RETRIES, LLM_RETRY_DELAY
+
+import asyncio
+
+import httpx
+
+from src.config import (
+    ANTHROPIC_API_KEY,
+    DEFAULT_MODEL,
+    LLM_MAX_RETRIES,
+    LLM_PROVIDER,
+    LLM_RETRY_DELAY,
+    OLLAMA_MODEL,
+    OLLAMA_URL,
+)
 from src.utils.logger import get_logger
 
 log = get_logger("llm")
+
 
 class LLM:
     def __init__(self):
@@ -17,6 +30,7 @@ class LLM:
                 self.client = None
             else:
                 from anthropic import AsyncAnthropic
+
                 self.client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
         else:
             self.provider = "ollama"
@@ -32,23 +46,31 @@ class LLM:
         for attempt in range(LLM_MAX_RETRIES):
             try:
                 if self.provider == "anthropic":
-                    kw = {"model": self.model, "max_tokens": max_tokens, "messages": [{"role": "user", "content": prompt}]}
-                    if system: kw["system"] = system
+                    kw = {
+                        "model": self.model,
+                        "max_tokens": max_tokens,
+                        "messages": [{"role": "user", "content": prompt}],
+                    }
+                    if system:
+                        kw["system"] = system
                     r = await self.client.messages.create(**kw)
                     self._failures = 0
                     return r.content[0].text
                 else:
                     msgs = []
-                    if system: msgs.append({"role": "system", "content": system})
+                    if system:
+                        msgs.append({"role": "system", "content": system})
                     msgs.append({"role": "user", "content": prompt})
                     async with httpx.AsyncClient(timeout=120) as c:
-                        resp = await c.post(f"{OLLAMA_URL}/api/chat", json={"model": self.model, "messages": msgs, "stream": False})
+                        resp = await c.post(
+                            f"{OLLAMA_URL}/api/chat", json={"model": self.model, "messages": msgs, "stream": False}
+                        )
                         resp.raise_for_status()
                     self._failures = 0
                     return resp.json().get("message", {}).get("content", "")
             except Exception as e:
                 self._failures += 1
-                log.error(f"LLM failed (attempt {attempt+1}): {e}")
+                log.error(f"LLM failed (attempt {attempt + 1}): {e}")
                 if attempt < LLM_MAX_RETRIES - 1:
-                    await asyncio.sleep(LLM_RETRY_DELAY * (2 ** attempt))
+                    await asyncio.sleep(LLM_RETRY_DELAY * (2**attempt))
         return None

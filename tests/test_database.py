@@ -1,7 +1,13 @@
 """Tests for DeepResearch database."""
-import pytest, pytest_asyncio, tempfile
+
+import tempfile
 from pathlib import Path
+
+import pytest
+import pytest_asyncio
+
 from src.db.database import Database
+
 
 @pytest_asyncio.fixture
 async def db():
@@ -11,11 +17,13 @@ async def db():
         yield db
         await db.close()
 
+
 @pytest.mark.asyncio
 async def test_create_project(db):
     p = await db.create_project("Test Research", "What is FastAPI?")
     assert p["title"] == "Test Research"
     assert p["status"] == "pending"
+
 
 @pytest.mark.asyncio
 async def test_list_projects(db):
@@ -23,6 +31,7 @@ async def test_list_projects(db):
     await db.create_project("P2", "q2")
     projects = await db.list_projects()
     assert len(projects) == 2
+
 
 @pytest.mark.asyncio
 async def test_update_project(db):
@@ -32,12 +41,14 @@ async def test_update_project(db):
     assert updated["status"] == "completed"
     assert updated["report"] == "Done"
 
+
 @pytest.mark.asyncio
 async def test_delete_project(db):
     p = await db.create_project("Delete", "q")
     ok = await db.delete_project(p["id"])
     assert ok is True
     assert await db.get_project(p["id"]) is None
+
 
 @pytest.mark.asyncio
 async def test_add_source(db):
@@ -47,6 +58,7 @@ async def test_add_source(db):
     sources = await db.get_sources(p["id"])
     assert len(sources) == 1
 
+
 @pytest.mark.asyncio
 async def test_source_increments_count(db):
     p = await db.create_project("Count", "q")
@@ -54,6 +66,7 @@ async def test_source_increments_count(db):
     await db.add_source(p["id"], "https://b.com")
     updated = await db.get_project(p["id"])
     assert updated["sources_count"] == 2
+
 
 @pytest.mark.asyncio
 async def test_chunks_and_search(db):
@@ -64,6 +77,7 @@ async def test_chunks_and_search(db):
     results = await db.search_chunks("Python")
     assert len(results) >= 1
 
+
 @pytest.mark.asyncio
 async def test_add_finding(db):
     p = await db.create_project("Findings", "q")
@@ -71,6 +85,7 @@ async def test_add_finding(db):
     assert f["content"] == "FastAPI is fast"
     findings = await db.get_findings(p["id"])
     assert len(findings) == 1
+
 
 @pytest.mark.asyncio
 async def test_follow_up(db):
@@ -80,11 +95,13 @@ async def test_follow_up(db):
     follow_ups = await db.get_follow_ups(p["id"])
     assert len(follow_ups) == 1
 
+
 @pytest.mark.asyncio
 async def test_activity_log(db):
     await db.log_event("test", "Test event", data={"key": "val"})
     events = await db.get_activity(limit=1)
     assert len(events) == 1
+
 
 @pytest.mark.asyncio
 async def test_stats(db):

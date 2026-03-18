@@ -9,11 +9,10 @@ Pipeline:
 6. Support follow-up questions with context
 """
 
-import json
-from src.db.database import Database
 from src.ai.llm import LLM
-from src.research.crawler import fetch_url, chunk_text, search_web
 from src.config import MAX_SEARCH_RESULTS
+from src.db.database import Database
+from src.research.crawler import chunk_text, fetch_url, search_web
 from src.utils.logger import get_logger
 
 log = get_logger("engine")
@@ -54,8 +53,7 @@ class ResearchEngine:
             report = await self._generate_report(pid, topic)
 
             # Complete
-            await self.db.update_project(pid, status="completed", report=report,
-                                          completed_at=self.db._now())
+            await self.db.update_project(pid, status="completed", report=report, completed_at=self.db._now())
             await self.db.log_event("research_completed", f"Completed: {topic[:80]}", project_id=pid)
             await self._emit("research_completed", {"project_id": pid})
 
@@ -109,9 +107,11 @@ class ResearchEngine:
         if not self.llm or not self.llm.is_healthy:
             answer = "LLM not available."
         else:
-            answer = await self.llm.query(prompt,
+            answer = await self.llm.query(
+                prompt,
                 system="You answer research follow-up questions based on gathered sources. Cite sources. Be thorough.",
-                max_tokens=2000)
+                max_tokens=2000,
+            )
 
         if not answer:
             answer = "Failed to generate an answer."
@@ -170,9 +170,7 @@ class ResearchEngine:
         title = result.get("title", url)
 
         # Store source
-        source = await self.db.add_source(
-            project_id, url, title=title,
-            content=text[:10000], relevance=0.5)
+        source = await self.db.add_source(project_id, url, title=title, content=text[:10000], relevance=0.5)
 
         # Chunk and index
         chunks = chunk_text(text)
@@ -222,7 +220,7 @@ class ResearchEngine:
                 bracket_end = line.find("]")
                 if bracket_end > 0:
                     meta = line[1:bracket_end]
-                    content = line[bracket_end+1:].strip()
+                    content = line[bracket_end + 1 :].strip()
                     parts = meta.split("|")
                     if len(parts) >= 1:
                         category = parts[0].strip().lower()
@@ -254,9 +252,11 @@ class ResearchEngine:
             f"Write in clear, professional prose. Cite sources where relevant."
         )
 
-        report = await self.llm.query(prompt,
+        report = await self.llm.query(
+            prompt,
             system="You write thorough, well-structured research reports. Cite sources. Be comprehensive but concise.",
-            max_tokens=3000)
+            max_tokens=3000,
+        )
 
         return report or "Report generation failed."
 

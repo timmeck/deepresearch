@@ -1,9 +1,14 @@
 """Database for DeepResearch."""
-import aiosqlite, json
-from datetime import datetime, timezone
+
+import json
+from datetime import UTC, datetime
 from pathlib import Path
+
+import aiosqlite
+
+from src.ai.embeddings import embed_text, search_similar, store_embedding
+from src.ai.embeddings import ensure_table as ensure_embeddings_table
 from src.config import DB_PATH
-from src.ai.embeddings import embed_text, store_embedding, search_similar, ensure_table as ensure_embeddings_table
 from src.utils.logger import get_logger
 
 log = get_logger("db")
@@ -85,7 +90,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
 
 
 class Database:
-    def __init__(self, db_path: Path = None):
+    def __init__(self, db_path: Path | None = None):
         self.db_path = db_path or DB_PATH
         self.conn: aiosqlite.Connection | None = None
 
@@ -99,8 +104,10 @@ class Database:
         for s in FTS_SCHEMA.strip().split(";"):
             s = s.strip()
             if s:
-                try: await self.conn.execute(s)
-                except: pass
+                try:
+                    await self.conn.execute(s)
+                except Exception:
+                    pass
         await self.conn.commit()
         await ensure_embeddings_table(self.conn)
         log.info(f"Database initialized: {self.db_path}")
@@ -111,7 +118,7 @@ class Database:
             self.conn = None
 
     def _now(self) -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     # ── Projects ───────────────────────────────────────────────────
 
@@ -119,7 +126,8 @@ class Database:
         now = self._now()
         c = await self.conn.execute(
             "INSERT INTO research_projects (title, query, status, created_at) VALUES (?, ?, 'pending', ?)",
-            (title, query, now))
+            (title, query, now),
+        )
         await self.conn.commit()
         return await self.get_project(c.lastrowid)
 
@@ -134,14 +142,17 @@ class Database:
 
     async def update_project(self, project_id: int, **kwargs):
         sets = ", ".join(f"{k} = ?" for k in kwargs)
-        vals = list(kwargs.values()) + [project_id]
+        vals = [*list(kwargs.values()), project_id]
         await self.conn.execute(f"UPDATE research_projects SET {sets} WHERE id = ?", vals)
         await self.conn.commit()
 
     async def delete_project(self, project_id: int) -> bool:
         for tbl in ["sources", "findings", "follow_ups", "source_chunks"]:
             if tbl == "source_chunks":
-                await self.conn.execute(f"DELETE FROM source_chunks WHERE source_id IN (SELECT id FROM sources WHERE project_id = ?)", (project_id,))
+                await self.conn.execute(
+                    "DELETE FROM source_chunks WHERE source_id IN (SELECT id FROM sources WHERE project_id = ?)",
+                    (project_id,),
+                )
             else:
                 await self.conn.execute(f"DELETE FROM {tbl} WHERE project_id = ?", (project_id,))
         cur = await self.conn.execute("DELETE FROM research_projects WHERE id = ?", (project_id,))
@@ -150,12 +161,22 @@ class Database:
 
     # ── Sources ────────────────────────────────────────────────────
 
-    async def add_source(self, project_id: int, url: str, title: str = None,
-                         content: str = None, summary: str = None, relevance: float = 0.5) -> dict:
+    async def add_source(
+        self,
+        project_id: int,
+        url: str,
+        title: str | None = None,
+        content: str | None = None,
+        summary: str | None = None,
+        relevance: float = 0.5,
+    ) -> dict:
         c = await self.conn.execute(
             "INSERT INTO sources (project_id, url, title, content, summary, relevance, crawled_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (project_id, url, title, content, summary, relevance, self._now()))
-        await self.conn.execute("UPDATE research_projects SET sources_count = sources_count + 1 WHERE id = ?", (project_id,))
+            (project_id, url, title, content, summary, relevance, self._now()),
+        )
+        await self.conn.execute(
+            "UPDATE research_projects SET sources_count = sources_count + 1 WHERE id = ?", (project_id,)
+        )
         await self.conn.commit()
         return {"id": c.lastrowid, "url": url, "title": title}
 
@@ -166,11 +187,13 @@ class Database:
     async def add_chunk(self, source_id: int, chunk_index: int, content: str) -> int:
         c = await self.conn.execute(
             "INSERT INTO source_chunks (source_id, chunk_index, content) VALUES (?, ?, ?)",
-            (source_id, chunk_index, content))
+            (source_id, chunk_index, content),
+        )
         cid = c.lastrowid
         try:
             await self.conn.execute("INSERT INTO chunks_fts(rowid, content) VALUES (?, ?)", (cid, content))
-        except: pass
+        except Exception:
+            pass
         await self.conn.commit()
         # Generate and store embedding
         vector = await embed_text(content)
@@ -178,7 +201,7 @@ class Database:
             await store_embedding(self.conn, "source_chunks", cid, vector)
         return cid
 
-    async def search_chunks(self, query: str, project_id: int = None, limit: int = 10) -> list[dict]:
+    async def search_chunks(self, query: str, project_id: int | None = None, limit: int = 10) -> list[dict]:
         """Hybrid search: semantic similarity + FTS5."""
         # Strategy 1: Semantic search
         semantic_scores = {}
@@ -236,7 +259,9 @@ class Database:
                 else:
                     c = await self.conn.execute(
                         "SELECT sc.*, s.url, s.title as source_title, s.project_id "
-                        "FROM source_chunks sc JOIN sources s ON s.id = sc.source_id WHERE sc.id = ?", (cid,))
+                        "FROM source_chunks sc JOIN sources s ON s.id = sc.source_id WHERE sc.id = ?",
+                        (cid,),
+                    )
                     row = await c.fetchone()
                     if row:
                         d = dict(row)
@@ -258,31 +283,44 @@ class Database:
 
     # ── Findings ───────────────────────────────────────────────────
 
-    async def add_finding(self, project_id: int, content: str, category: str = "insight",
-                          confidence: float = 0.5, source_ids: list = None) -> dict:
+    async def add_finding(
+        self,
+        project_id: int,
+        content: str,
+        category: str = "insight",
+        confidence: float = 0.5,
+        source_ids: list | None = None,
+    ) -> dict:
         c = await self.conn.execute(
             "INSERT INTO findings (project_id, content, category, confidence, source_ids, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (project_id, content, category, confidence, json.dumps(source_ids or []), self._now()))
+            (project_id, content, category, confidence, json.dumps(source_ids or []), self._now()),
+        )
         await self.conn.commit()
         return {"id": c.lastrowid, "content": content, "category": category, "confidence": confidence}
 
     async def get_findings(self, project_id: int) -> list[dict]:
-        c = await self.conn.execute("SELECT * FROM findings WHERE project_id = ? ORDER BY confidence DESC", (project_id,))
+        c = await self.conn.execute(
+            "SELECT * FROM findings WHERE project_id = ? ORDER BY confidence DESC", (project_id,)
+        )
         results = []
         for r in await c.fetchall():
             d = dict(r)
-            try: d["source_ids"] = json.loads(d["source_ids"])
-            except: pass
+            try:
+                d["source_ids"] = json.loads(d["source_ids"])
+            except Exception:
+                pass
             results.append(d)
         return results
 
     # ── Follow-ups ─────────────────────────────────────────────────
 
-    async def add_follow_up(self, project_id: int, question: str, answer: str = None,
-                            sources: list = None) -> dict:
+    async def add_follow_up(
+        self, project_id: int, question: str, answer: str | None = None, sources: list | None = None
+    ) -> dict:
         c = await self.conn.execute(
             "INSERT INTO follow_ups (project_id, question, answer, sources, created_at) VALUES (?, ?, ?, ?, ?)",
-            (project_id, question, answer, json.dumps(sources or []), self._now()))
+            (project_id, question, answer, json.dumps(sources or []), self._now()),
+        )
         await self.conn.commit()
         return {"id": c.lastrowid, "question": question}
 
@@ -292,15 +330,18 @@ class Database:
 
     # ── Activity ───────────────────────────────────────────────────
 
-    async def log_event(self, event_type: str, message: str, project_id: int = None, data: dict = None):
+    async def log_event(self, event_type: str, message: str, project_id: int | None = None, data: dict | None = None):
         await self.conn.execute(
             "INSERT INTO activity_log (project_id, event_type, message, data, created_at) VALUES (?, ?, ?, ?, ?)",
-            (project_id, event_type, message, json.dumps(data, default=str) if data else None, self._now()))
+            (project_id, event_type, message, json.dumps(data, default=str) if data else None, self._now()),
+        )
         await self.conn.commit()
 
-    async def get_activity(self, project_id: int = None, limit: int = 50) -> list[dict]:
+    async def get_activity(self, project_id: int | None = None, limit: int = 50) -> list[dict]:
         if project_id:
-            c = await self.conn.execute("SELECT * FROM activity_log WHERE project_id = ? ORDER BY created_at DESC LIMIT ?", (project_id, limit))
+            c = await self.conn.execute(
+                "SELECT * FROM activity_log WHERE project_id = ? ORDER BY created_at DESC LIMIT ?", (project_id, limit)
+            )
         else:
             c = await self.conn.execute("SELECT * FROM activity_log ORDER BY created_at DESC LIMIT ?", (limit,))
         return [dict(r) for r in await c.fetchall()]

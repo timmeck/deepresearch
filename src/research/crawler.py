@@ -128,10 +128,65 @@ def _parse_html(url: str, html: str) -> dict:
 
 
 async def search_web(query: str, num_results: int = 8) -> list[str]:
-    """Search DuckDuckGo HTML and return result URLs.
+    """Search using duckduckgo-search library (stable API).
+
+    Returns a list of URLs from the search results.
+    Falls back to HTML scraping if the library is unavailable.
+    """
+    try:
+        from duckduckgo_search import DDGS
+
+        results = []
+        with DDGS() as ddgs:
+            for r in ddgs.text(query, max_results=num_results):
+                url = r.get("href", r.get("link", ""))
+                if url:
+                    results.append(url)
+
+        log.info(f"Search '{query[:50]}': {len(results)} results")
+        return results
+    except ImportError:
+        log.warning("duckduckgo-search not installed, falling back to HTML scraping")
+        return await _search_web_html(query, num_results)
+    except Exception as e:
+        log.error(f"Search failed: {e}")
+        return await _search_web_html(query, num_results)
+
+
+async def search_web_rich(query: str, max_results: int = 10) -> list[dict]:
+    """Search using duckduckgo-search library (stable API).
+
+    Returns list of dicts with url, title, snippet.
+    Falls back to HTML scraping if the library is unavailable.
+    """
+    try:
+        from duckduckgo_search import DDGS
+
+        results = []
+        with DDGS() as ddgs:
+            for r in ddgs.text(query, max_results=max_results):
+                results.append({
+                    "url": r.get("href", r.get("link", "")),
+                    "title": r.get("title", ""),
+                    "snippet": r.get("body", r.get("snippet", "")),
+                })
+
+        log.info(f"Search '{query[:50]}': {len(results)} results")
+        return results
+    except ImportError:
+        log.warning("duckduckgo-search not installed, falling back to HTML scraping")
+        urls = await _search_web_html(query, max_results)
+        return [{"url": u, "title": "", "snippet": ""} for u in urls]
+    except Exception as e:
+        log.error(f"Search failed: {e}")
+        urls = await _search_web_html(query, max_results)
+        return [{"url": u, "title": "", "snippet": ""} for u in urls]
+
+
+async def _search_web_html(query: str, num_results: int = 8) -> list[str]:
+    """Fallback: Search DuckDuckGo HTML and return result URLs.
 
     Uses DuckDuckGo's HTML-only search page to avoid API keys.
-    Returns a list of URLs from the search results.
     """
     search_url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
     urls = []
@@ -174,7 +229,7 @@ async def search_web(query: str, num_results: int = 8) -> list[str]:
     except Exception as e:
         log.warning(f"DuckDuckGo search failed for '{query}': {e}")
 
-    log.info(f"DuckDuckGo search '{query[:50]}' returned {len(urls)} URLs")
+    log.info(f"DuckDuckGo HTML search '{query[:50]}' returned {len(urls)} URLs")
     return urls[:num_results]
 
 

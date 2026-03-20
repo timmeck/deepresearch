@@ -12,7 +12,7 @@ Pipeline:
 from src.ai.llm import LLM
 from src.config import MAX_SEARCH_RESULTS
 from src.db.database import Database
-from src.research.crawler import chunk_text, fetch_url, search_web
+from src.research.crawler import chunk_text, fetch_url, search_web, search_web_rich
 from src.utils.logger import get_logger
 
 log = get_logger("engine")
@@ -25,30 +25,65 @@ class ResearchEngine:
         self.on_event = None  # SSE callback
 
     async def research(self, topic: str, depth: int = 1) -> dict:
-        """Execute a full research cycle on a topic."""
+        """Execute a full research cycle on a topic.
+
+        Args:
+            topic: The research topic/question.
+            depth: Number of research passes (1=standard, 2+=iterative deepening).
+                   After the first pass, the LLM identifies gaps and follow-up
+                   questions, then runs additional search+crawl+analyze cycles.
+        """
         # Create project
         project = await self.db.create_project(title=topic[:100], query=topic)
         pid = project["id"]
 
-        await self._emit("research_started", {"project_id": pid, "topic": topic})
-        await self.db.log_event("research_started", f"Research: {topic[:80]}", project_id=pid)
+        await self._emit("research_started", {"project_id": pid, "topic": topic, "depth": depth})
+        await self.db.log_event("research_started", f"Research (depth={depth}): {topic[:80]}", project_id=pid)
         await self.db.update_project(pid, status="researching")
 
         try:
-            # Step 1: Generate search URLs
-            await self._emit("step", {"project_id": pid, "step": "Generating search queries..."})
+            # === Pass 1: Initial research ===
+            await self._emit("step", {"project_id": pid, "step": "Pass 1: Generating search queries..."})
             urls = await self._generate_search_urls(topic)
 
-            # Step 2: Crawl and index
-            await self._emit("step", {"project_id": pid, "step": f"Crawling {len(urls)} sources..."})
+            await self._emit("step", {"project_id": pid, "step": f"Pass 1: Crawling {len(urls)} sources..."})
             for url in urls[:MAX_SEARCH_RESULTS]:
                 await self._crawl_and_index(pid, url)
 
-            # Step 3: Analyze findings
-            await self._emit("step", {"project_id": pid, "step": "Analyzing content..."})
+            await self._emit("step", {"project_id": pid, "step": "Pass 1: Analyzing content..."})
             await self._extract_findings(pid, topic)
 
-            # Step 4: Generate report
+            # === Passes 2..depth: Iterative deepening ===
+            for current_depth in range(2, depth + 1):
+                await self._emit("step", {
+                    "project_id": pid,
+                    "step": f"Pass {current_depth}/{depth}: Identifying gaps..."
+                })
+                gap_queries = await self._identify_gaps(pid, topic)
+
+                if not gap_queries:
+                    log.info(f"Pass {current_depth}: No gaps identified, stopping early")
+                    break
+
+                log.info(f"Pass {current_depth}: Found {len(gap_queries)} gap queries")
+
+                for gq in gap_queries:
+                    await self._emit("step", {
+                        "project_id": pid,
+                        "step": f"Pass {current_depth}/{depth}: Searching '{gq[:40]}...'"
+                    })
+                    gap_urls = await search_web(gq, num_results=5)
+
+                    for url in gap_urls[:5]:
+                        await self._crawl_and_index(pid, url)
+
+                await self._emit("step", {
+                    "project_id": pid,
+                    "step": f"Pass {current_depth}/{depth}: Analyzing new content..."
+                })
+                await self._extract_findings(pid, topic)
+
+            # === Final: Generate report ===
             await self._emit("step", {"project_id": pid, "step": "Generating report..."})
             report = await self._generate_report(pid, topic)
 
@@ -67,6 +102,7 @@ class ResearchEngine:
                 "report": report,
                 "sources": len(sources),
                 "findings": len(findings),
+                "depth": depth,
             }
 
         except Exception as e:
@@ -259,6 +295,46 @@ class ResearchEngine:
         )
 
         return report or "Report generation failed."
+
+    async def _identify_gaps(self, project_id: int, topic: str) -> list[str]:
+        """Ask the LLM to identify 2-3 gaps/follow-up questions from current findings.
+
+        Returns a list of search queries to fill the gaps.
+        """
+        findings = await self.db.get_findings(project_id)
+        sources = await self.db.get_sources(project_id)
+
+        if not findings:
+            return []
+
+        findings_text = "\n".join(f"- [{f['category']}] {f['content']}" for f in findings)
+        sources_text = "\n".join(f"- {s.get('title', s['url'])}" for s in sources[:10])
+
+        if not self.llm or not self.llm.is_healthy:
+            return []
+
+        result = await self.llm.query(
+            f"You are analyzing research findings about: {topic}\n\n"
+            f"CURRENT FINDINGS:\n{findings_text}\n\n"
+            f"SOURCES ALREADY CONSULTED:\n{sources_text}\n\n"
+            f"Identify 2-3 important gaps, missing perspectives, or follow-up questions "
+            f"that would make this research more complete.\n\n"
+            f"For each gap, write a specific web search query that would help fill it.\n"
+            f"Return ONLY the search queries, one per line, no numbering or other text.",
+            system="You identify research gaps and generate targeted search queries. Return only queries, one per line.",
+            max_tokens=300,
+        )
+
+        if not result:
+            return []
+
+        queries = []
+        for line in result.strip().split("\n"):
+            line = line.strip().strip("-").strip("*").strip("0123456789.").strip()
+            if line and len(line) > 5 and not line.startswith("#"):
+                queries.append(line)
+
+        return queries[:3]  # Cap at 3 follow-up queries
 
     async def _emit(self, event_type: str, data: dict):
         if self.on_event:

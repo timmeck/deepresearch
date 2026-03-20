@@ -9,6 +9,9 @@ Pipeline:
 6. Support follow-up questions with context
 """
 
+import re
+from urllib.parse import urlparse
+
 from src.ai.llm import LLM
 from src.config import MAX_SEARCH_RESULTS
 from src.db.database import Database
@@ -17,6 +20,137 @@ from src.utils.logger import get_logger
 
 log = get_logger("engine")
 
+# ── Source Quality Scoring ────────────────────────────────────────
+
+TRUSTED_DOMAINS = {
+    "github.com", "arxiv.org", "wikipedia.org", "stackoverflow.com",
+    "scholar.google.com", "nature.com", "ieee.org", "acm.org",
+    "medium.com", "dev.to",
+}
+
+TRUSTED_TLDS = {".edu", ".gov"}
+
+TRUSTED_PREFIXES = ("docs.",)
+
+
+def compute_source_score(url: str, text: str) -> float:
+    """Score a source 0.0-1.0 based on domain reputation, content length,
+    citation density, and freshness signals."""
+    score = 0.0
+    parsed = urlparse(url)
+    domain = parsed.netloc.lower().lstrip("www.")
+
+    # 1. Domain reputation (0-0.35)
+    if domain in TRUSTED_DOMAINS:
+        score += 0.35
+    elif any(domain.endswith(tld) for tld in TRUSTED_TLDS):
+        score += 0.30
+    elif any(domain.startswith(p) for p in TRUSTED_PREFIXES):
+        score += 0.25
+    else:
+        score += 0.10
+
+    # 2. Content length (0-0.25) -- longer = more substance
+    text_len = len(text)
+    if text_len > 5000:
+        score += 0.25
+    elif text_len > 2000:
+        score += 0.20
+    elif text_len > 500:
+        score += 0.10
+    else:
+        score += 0.05
+
+    # 3. Citation / link density (0-0.20)
+    link_count = text.lower().count("http://") + text.lower().count("https://")
+    ref_count = len(re.findall(r'\[\d+\]', text))  # Academic-style references
+    citations = link_count + ref_count
+    if citations > 10:
+        score += 0.20
+    elif citations > 5:
+        score += 0.15
+    elif citations > 0:
+        score += 0.10
+
+    # 4. Freshness signals (0-0.20) -- detect year mentions
+    import datetime
+    current_year = datetime.datetime.now().year
+    years_found = re.findall(r'\b(20\d{2})\b', text[:3000])
+    if years_found:
+        most_recent = max(int(y) for y in years_found)
+        age = current_year - most_recent
+        if age <= 1:
+            score += 0.20
+        elif age <= 3:
+            score += 0.15
+        elif age <= 5:
+            score += 0.10
+        else:
+            score += 0.05
+
+    return min(round(score, 2), 1.0)
+
+
+# ── Research Templates ────────────────────────────────────────────
+
+RESEARCH_TEMPLATES = {
+    "technical_comparison": {
+        "system_prompt": (
+            "You are a senior technical analyst. Compare the technologies objectively. "
+            "Produce a structured comparison including: overview, feature matrix (as a table), "
+            "pros/cons for each, performance considerations, community/ecosystem, and a recommendation. "
+            "Use markdown tables for comparisons."
+        ),
+        "report_format": (
+            "Structure the report as:\n"
+            "1. Executive Summary\n"
+            "2. Technology Overview (brief intro of each)\n"
+            "3. Feature Comparison Table (markdown table)\n"
+            "4. Pros and Cons (for each technology)\n"
+            "5. Performance & Scalability\n"
+            "6. Community & Ecosystem\n"
+            "7. Recommendation\n"
+            "8. Sources\n"
+        ),
+    },
+    "market_analysis": {
+        "system_prompt": (
+            "You are a market research analyst. Analyze the market landscape comprehensively. "
+            "Cover market size, key players, trends, adoption rates, competitive dynamics, "
+            "and future outlook. Use data and citations where available."
+        ),
+        "report_format": (
+            "Structure the report as:\n"
+            "1. Executive Summary\n"
+            "2. Market Overview & Size\n"
+            "3. Key Players & Market Share\n"
+            "4. Trends & Drivers\n"
+            "5. Adoption & Growth Metrics\n"
+            "6. Competitive Landscape\n"
+            "7. Future Outlook & Predictions\n"
+            "8. Sources\n"
+        ),
+    },
+    "security_audit": {
+        "system_prompt": (
+            "You are a cybersecurity researcher. Analyze security aspects thoroughly. "
+            "Cover known vulnerabilities (CVEs), attack surfaces, best practices, "
+            "security track record, and mitigation strategies. Be specific and technical."
+        ),
+        "report_format": (
+            "Structure the report as:\n"
+            "1. Executive Summary\n"
+            "2. Security Overview\n"
+            "3. Known Vulnerabilities & CVEs\n"
+            "4. Attack Surface Analysis\n"
+            "5. Security Best Practices\n"
+            "6. Risk Assessment (High/Medium/Low)\n"
+            "7. Mitigation Recommendations\n"
+            "8. Sources\n"
+        ),
+    },
+}
+
 
 class ResearchEngine:
     def __init__(self, db: Database, llm: LLM):
@@ -24,7 +158,7 @@ class ResearchEngine:
         self.llm = llm
         self.on_event = None  # SSE callback
 
-    async def research(self, topic: str, depth: int = 1) -> dict:
+    async def research(self, topic: str, depth: int = 1, template: str | None = None) -> dict:
         """Execute a full research cycle on a topic.
 
         Args:
@@ -32,12 +166,23 @@ class ResearchEngine:
             depth: Number of research passes (1=standard, 2+=iterative deepening).
                    After the first pass, the LLM identifies gaps and follow-up
                    questions, then runs additional search+crawl+analyze cycles.
+            template: Optional research template name. One of:
+                      'technical_comparison', 'market_analysis', 'security_audit'.
+                      Provides a custom system prompt and structured output format.
         """
+        # Validate template
+        tmpl = None
+        if template:
+            tmpl = RESEARCH_TEMPLATES.get(template)
+            if not tmpl:
+                available = ", ".join(RESEARCH_TEMPLATES.keys())
+                log.warning(f"Unknown template '{template}', available: {available}")
+
         # Create project
         project = await self.db.create_project(title=topic[:100], query=topic)
         pid = project["id"]
 
-        await self._emit("research_started", {"project_id": pid, "topic": topic, "depth": depth})
+        await self._emit("research_started", {"project_id": pid, "topic": topic, "depth": depth, "template": template})
         await self.db.log_event("research_started", f"Research (depth={depth}): {topic[:80]}", project_id=pid)
         await self.db.update_project(pid, status="researching")
 
@@ -85,7 +230,7 @@ class ResearchEngine:
 
             # === Final: Generate report ===
             await self._emit("step", {"project_id": pid, "step": "Generating report..."})
-            report = await self._generate_report(pid, topic)
+            report = await self._generate_report(pid, topic, template=tmpl)
 
             # Complete
             await self.db.update_project(pid, status="completed", report=report, completed_at=self.db._now())
@@ -205,15 +350,18 @@ class ResearchEngine:
         text = result["text"]
         title = result.get("title", url)
 
-        # Store source
-        source = await self.db.add_source(project_id, url, title=title, content=text[:10000], relevance=0.5)
+        # Compute source quality score
+        source_score = compute_source_score(url, text)
+
+        # Store source (use source_score as relevance)
+        source = await self.db.add_source(project_id, url, title=title, content=text[:10000], relevance=source_score)
 
         # Chunk and index
         chunks = chunk_text(text)
         for i, chunk in enumerate(chunks):
             await self.db.add_chunk(source["id"], i, chunk)
 
-        log.info(f"Crawled: {title[:50]} ({len(chunks)} chunks)")
+        log.info(f"Crawled: {title[:50]} ({len(chunks)} chunks, score={source_score})")
 
     async def _extract_findings(self, project_id: int, topic: str):
         """Analyze crawled content and extract key findings."""
@@ -221,11 +369,17 @@ class ResearchEngine:
         if not sources:
             return
 
-        # Build content summary from all sources
+        # Sort sources by relevance (source_score) so highest-quality sources come first
+        sorted_sources = sorted(sources, key=lambda s: s.get("relevance", 0), reverse=True)
+
+        # Build content summary from top sources, weighted by quality
         content_summary = ""
-        for s in sources[:5]:  # Top 5 sources
-            content = s.get("content", "")[:2000]
-            content_summary += f"\n--- {s.get('title', s['url'])} ---\n{content}\n"
+        for s in sorted_sources[:5]:  # Top 5 by quality
+            score = s.get("relevance", 0.5)
+            # Give higher-quality sources more content space
+            max_chars = 2000 if score >= 0.5 else 1000
+            content = s.get("content", "")[:max_chars]
+            content_summary += f"\n--- {s.get('title', s['url'])} (quality: {score}) ---\n{content}\n"
 
         result = await self.llm.query(
             f"Extract 5-10 key findings from these sources about: {topic}\n\n"
@@ -267,30 +421,54 @@ class ResearchEngine:
             if content and len(content) > 10:
                 await self.db.add_finding(project_id, content, category, confidence)
 
-    async def _generate_report(self, project_id: int, topic: str) -> str:
-        """Synthesize findings into a structured research report."""
+    async def _generate_report(self, project_id: int, topic: str, template: dict | None = None) -> str:
+        """Synthesize findings into a structured research report.
+
+        Args:
+            project_id: The project to generate a report for.
+            topic: The research topic.
+            template: Optional template dict with 'system_prompt' and 'report_format'.
+        """
         findings = await self.db.get_findings(project_id)
         sources = await self.db.get_sources(project_id)
 
+        # Sort sources by quality score for weighted presentation
+        sorted_sources = sorted(sources, key=lambda s: s.get("relevance", 0), reverse=True)
+
+        # Build findings text with source quality weighting
         findings_text = "\n".join(f"- [{f['category']}] {f['content']}" for f in findings)
-        sources_text = "\n".join(f"- {s.get('title', s['url'])} ({s['url']})" for s in sources)
+        sources_text = "\n".join(
+            f"- {s.get('title', s['url'])} ({s['url']}) [quality: {s.get('relevance', 0.5):.2f}]"
+            for s in sorted_sources
+        )
+
+        # Use template format or default
+        if template:
+            report_structure = template["report_format"]
+            system_prompt = template["system_prompt"]
+        else:
+            report_structure = (
+                "Structure the report with:\n"
+                "1. Executive Summary (2-3 sentences)\n"
+                "2. Key Findings (bullet points)\n"
+                "3. Analysis (detailed discussion)\n"
+                "4. Conclusions\n"
+                "5. Sources\n"
+            )
+            system_prompt = "You write thorough, well-structured research reports. Cite sources. Be comprehensive but concise."
 
         prompt = (
             f"Write a comprehensive research report on: {topic}\n\n"
             f"Based on these findings:\n{findings_text}\n\n"
-            f"Sources consulted:\n{sources_text}\n\n"
-            f"Structure the report with:\n"
-            f"1. Executive Summary (2-3 sentences)\n"
-            f"2. Key Findings (bullet points)\n"
-            f"3. Analysis (detailed discussion)\n"
-            f"4. Conclusions\n"
-            f"5. Sources\n\n"
-            f"Write in clear, professional prose. Cite sources where relevant."
+            f"Sources consulted (sorted by quality score -- prioritize higher-quality sources):\n{sources_text}\n\n"
+            f"{report_structure}\n"
+            f"Write in clear, professional prose. Cite sources where relevant. "
+            f"Give more weight to findings from higher-quality sources."
         )
 
         report = await self.llm.query(
             prompt,
-            system="You write thorough, well-structured research reports. Cite sources. Be comprehensive but concise.",
+            system=system_prompt,
             max_tokens=3000,
         )
 

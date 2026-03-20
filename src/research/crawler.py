@@ -1,6 +1,8 @@
 """Web Crawler -- Fetch and extract text from URLs."""
 
+import os
 import random
+import tempfile
 from urllib.parse import quote_plus, urlparse
 
 import httpx
@@ -11,6 +13,38 @@ from src.utils.logger import get_logger
 log = get_logger("crawler")
 
 MAX_PAGE_SIZE = 512 * 1024  # 512KB
+MAX_PDF_SIZE = 10 * 1024 * 1024  # 10MB
+
+
+def _extract_pdf_text(pdf_bytes: bytes) -> str:
+    """Extract text from PDF bytes using PyMuPDF (fitz).
+
+    Returns extracted text, or empty string if PyMuPDF is not installed.
+    """
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        log.warning("PyMuPDF not installed -- cannot extract PDF text. Install with: pip install PyMuPDF")
+        return ""
+
+    text_parts = []
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp.write(pdf_bytes)
+            tmp_path = tmp.name
+
+        doc = fitz.open(tmp_path)
+        for page in doc:
+            text_parts.append(page.get_text())
+        doc.close()
+    except Exception as e:
+        log.warning(f"PDF text extraction failed: {e}")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+    return "\n".join(text_parts)
 
 # Realistic browser User-Agent strings for rotation
 USER_AGENTS = [
@@ -79,6 +113,19 @@ async def fetch_url(url: str) -> dict:
                 resp.raise_for_status()
 
                 content_type = resp.headers.get("content-type", "")
+
+                # Handle PDF documents
+                if "application/pdf" in content_type or url.lower().endswith(".pdf"):
+                    pdf_bytes = resp.content
+                    if len(pdf_bytes) > MAX_PDF_SIZE:
+                        return {"url": url, "title": "", "text": "", "error": "PDF too large"}
+                    text = _extract_pdf_text(pdf_bytes)
+                    if not text:
+                        return {"url": url, "title": "", "text": "", "error": "PDF extraction failed (PyMuPDF not installed or empty PDF)"}
+                    # Derive title from URL filename
+                    pdf_name = url.rsplit("/", 1)[-1].replace(".pdf", "").replace("-", " ").replace("_", " ")
+                    return {"url": url, "title": pdf_name, "text": text[:50000]}
+
                 if "text/html" not in content_type and "text/plain" not in content_type:
                     return {"url": url, "title": "", "text": "", "error": f"Not HTML: {content_type}"}
 

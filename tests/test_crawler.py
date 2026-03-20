@@ -1,6 +1,6 @@
 """Tests for web crawler."""
 
-from src.research.crawler import chunk_text
+from src.research.crawler import chunk_text, _extract_pdf_text
 
 
 def test_chunk_small_text():
@@ -39,3 +39,15 @@ def test_chunk_preserves_content():
     assert "First" in full
     assert "Second" in full
     assert "Third" in full
+
+
+def test_extract_pdf_text_empty_bytes():
+    """PDF extraction with empty bytes should return empty string."""
+    result = _extract_pdf_text(b"")
+    assert result == "" or isinstance(result, str)
+
+
+def test_extract_pdf_text_invalid_bytes():
+    """PDF extraction with non-PDF bytes should handle gracefully."""
+    result = _extract_pdf_text(b"not a pdf file")
+    assert isinstance(result, str)

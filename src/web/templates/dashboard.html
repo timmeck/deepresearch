@@ -895,6 +895,110 @@
     ::-webkit-scrollbar-track { background: var(--bg-primary); }
     ::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+    /* ═══ Professional Upgrade: DeepResearch (#536DFE) ═══ */
+    :root {
+      --accent: #536DFE;
+      --accent-light: #8C9EFF;
+      --cyan: #536DFE;
+    }
+
+    /* Better typography */
+    body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+    /* Improved cards */
+    .card, .stat-card, .finding-card, .search-result {
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      border-radius: 8px;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .stat-card:hover {
+      box-shadow: 0 8px 24px rgba(83, 109, 254, 0.08), 0 2px 8px rgba(0,0,0,0.4);
+      transform: translateY(-2px);
+      border-color: var(--border-light);
+    }
+    .card:hover { box-shadow: 0 4px 16px rgba(83, 109, 254, 0.05); }
+    .finding-card:hover { box-shadow: 0 4px 16px rgba(83, 109, 254, 0.06); }
+    .search-result:hover { box-shadow: 0 4px 16px rgba(83, 109, 254, 0.05); border-color: var(--border-light); }
+
+    /* Card fade-in animation */
+    @keyframes cardFadeIn {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .stat-card { animation: cardFadeIn 0.4s ease both; }
+    .stat-card:nth-child(1) { animation-delay: 0.05s; }
+    .stat-card:nth-child(2) { animation-delay: 0.1s; }
+    .stat-card:nth-child(3) { animation-delay: 0.15s; }
+    .stat-card:nth-child(4) { animation-delay: 0.2s; }
+    .card { animation: cardFadeIn 0.4s ease both; animation-delay: 0.25s; }
+
+    /* Logo accent */
+    .logo span { color: #536DFE; }
+    .header-subtitle { color: #8C9EFF; }
+
+    /* Stat values */
+    .stat-value { color: #536DFE; }
+
+    /* Status dot */
+    .status-dot.healthy { background: #4CAF50; box-shadow: 0 0 8px rgba(76, 175, 80, 0.5); }
+    .status-dot.unhealthy { background: #FF5252; box-shadow: 0 0 8px rgba(255, 82, 82, 0.5); }
+
+    /* LLM status */
+    .llm-provider { color: #536DFE; }
+
+    /* Tab active */
+    .tab-btn.active { color: #536DFE; border-bottom-color: #536DFE; }
+    .tab-btn:hover { color: #8C9EFF; }
+
+    /* Better buttons */
+    .btn-primary { background: #536DFE; color: #0a1a1a; }
+    .btn-primary:hover { background: #8C9EFF; box-shadow: 0 2px 12px rgba(83, 109, 254, 0.3); }
+
+    /* Input focus */
+    textarea:focus, input[type="text"]:focus, input[type="search"]:focus { border-color: #536DFE; box-shadow: 0 0 0 3px rgba(83, 109, 254, 0.12); }
+
+    /* Filter buttons */
+    .filter-btn.active { background: rgba(83, 109, 254, 0.1); border-color: #536DFE; color: #536DFE; }
+    .filter-btn:hover { border-color: #536DFE; color: #536DFE; }
+
+    /* Project row hover */
+    .project-row:hover { background: rgba(83, 109, 254, 0.03); }
+
+    /* Finding source */
+    .finding-source { color: #536DFE; }
+    .finding-source:hover { color: #8C9EFF; }
+
+    /* Search result URL */
+    .search-result-url { color: #536DFE; }
+    .search-result-url:hover { color: #8C9EFF; }
+
+    /* Category badges with accent */
+    .cat-insight { background: rgba(83, 109, 254, 0.12); color: #536DFE; border-color: rgba(83, 109, 254, 0.25); }
+
+    /* Report content accent */
+    .report-content strong { color: #8C9EFF; }
+    .report-content blockquote { border-left-color: #536DFE; }
+    .report-content code { background: rgba(83, 109, 254, 0.08); }
+
+    /* Scrollbar accent */
+    ::-webkit-scrollbar-thumb:hover { background: #536DFE; }
+
+    /* Detail section title */
+    .detail-section-title { color: #536DFE; }
+
+    /* Card title accent */
+    .card-title .accent { color: #536DFE; }
+
+    /* Badge accent */
+    .badge-completed { background: rgba(76, 175, 80, 0.12); color: #4CAF50; border-color: rgba(76, 175, 80, 0.3); }
+    .badge-researching { background: rgba(255, 160, 0, 0.12); color: #FFA000; border-color: rgba(255, 160, 0, 0.3); }
+
+    /* Activity type */
+    .activity-type { color: #536DFE; }
+
+    /* Step icon done */
+    .step-icon.done { background: #536DFE; border-color: #536DFE; }
   </style>
 </head>
 <body>
